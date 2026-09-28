@@ -1,0 +1,235 @@
+#  Pizza Sales Analysis: SQL Exploratory Data Analysis
+
+An end-to-end EDA of one year of pizza restaurant sales (2015) using **MySQL**. The project answers ten business questions on orders, revenue, product mix and customer timing, then turns the results into recommendations.
+
+![SQL](https://img.shields.io/badge/SQL-MySQL-blue) ![Status](https://img.shields.io/badge/status-complete-brightgreen)
+
+---
+
+##  Table of Contents
+1. [Business Problem](#-business-problem)
+2. [Dataset](#-dataset)
+3. [Database Schema](#-database-schema)
+4. [Data Quality Checks](#-data-quality-checks)
+5. [Analysis and Insights](#-analysis-and-insights)
+6. [Key Findings](#-key-findings)
+7. [Recommendations](#-recommendations)
+8. [How to Run](#-how-to-run)
+9. [Repository Structure](#-repository-structure)
+10. [Tools and Skills](#-tools-and-skills)
+
+---
+
+##  Business Problem
+A pizza restaurant wants to understand **what sells, when it sells and what earns the most**, so it can plan staffing, menu and promotions.
+
+##  Dataset
+Four related CSV files covering **1 Jan to 31 Dec 2015**.
+
+| Table | Rows | Description |
+|---|---|---|
+| `orders` | 21,350 | One row per order (date and time) |
+| `order_details` | 48,620 | One row per pizza line in an order (pizza and quantity) |
+| `pizzas` | 96 | Each pizza by size, with price |
+| `pizza_types` | 32 | Pizza name, category and ingredients |
+
+## 🗄 Database Schema
+```
+pizza_types (pizza_type_id PK, name, category, ingredients)
+     │ 1
+     │
+     ▼ N
+pizzas (pizza_id PK, pizza_type_id FK, size, price)
+     │ 1
+     │
+     ▼ N
+order_details (order_details_id PK, order_id FK, pizza_id FK, quantity)
+     ▲ N
+     │
+     │ 1
+orders (order_id PK, date, time)
+```
+
+##  Data Quality Checks
+| Check | Result |
+|---|---|
+| Order lines with a pizza_id missing from `pizzas` | **0** |
+| NULL dates or times in `orders` | **0** |
+| Date range | 2015-01-01 to 2015-12-31 (358 trading days) |
+| Price range | $9.75 to $35.95 (average $16.44) |
+
+> **Note:** `price` must be `DECIMAL(6,2)`. Using `INT` rounds prices such as $12.75 and produces wrong revenue.
+
+---
+
+##  Analysis and Insights
+
+Full SQL is in [`pizza_sales_analysis.sql`](pizza_sales_analysis.sql).
+
+### Q1. Total orders placed
+```sql
+SELECT COUNT(DISTINCT order_id) AS total_orders FROM orders;
+```
+**21,350 orders.** Together they contain 48,620 order lines and 49,574 pizzas.
+
+### Q2. Total revenue
+```sql
+SELECT ROUND(SUM(p.price * od.quantity), 2) AS total_revenue
+FROM order_details od JOIN pizzas p ON p.pizza_id = od.pizza_id;
+```
+**$817,860.05**. Average order value is about $38.31, with 2.32 pizzas per order.
+
+### Q3. Highest-priced pizza
+```sql
+SELECT pt.name, p.size, p.price
+FROM pizzas p JOIN pizza_types pt ON pt.pizza_type_id = p.pizza_type_id
+ORDER BY p.price DESC LIMIT 1;
+```
+**The Greek Pizza (XXL), $35.95.** The next highest are Greek XL ($25.50) and Brie Carre S ($23.65).
+
+### Q4. Most common pizza size ordered
+```sql
+SELECT p.size, SUM(od.quantity) AS total_quantity
+FROM order_details od JOIN pizzas p ON p.pizza_id = od.pizza_id
+GROUP BY p.size ORDER BY total_quantity DESC;
+```
+| Size | Pizzas sold | Share |
+|---|---|---|
+| **L** | 18,956 | 38.2% |
+| M | 15,635 | 31.5% |
+| S | 14,403 | 29.1% |
+| XL | 552 | 1.1% |
+| XXL | 28 | 0.06% |
+
+![size](charts/size.png)
+
+### Q5. Top 5 most ordered pizza types
+```sql
+SELECT pt.name, SUM(od.quantity) AS total_quantity
+FROM order_details od
+JOIN pizzas p ON p.pizza_id = od.pizza_id
+JOIN pizza_types pt ON pt.pizza_type_id = p.pizza_type_id
+GROUP BY pt.name ORDER BY total_quantity DESC LIMIT 5;
+```
+| Rank | Pizza | Quantity |
+|---|---|---|
+| 1 | The Classic Deluxe Pizza | 2,453 |
+| 2 | The Barbecue Chicken Pizza | 2,432 |
+| 3 | The Hawaiian Pizza | 2,422 |
+| 4 | The Pepperoni Pizza | 2,418 |
+| 5 | The Thai Chicken Pizza | 2,371 |
+
+The top 5 are separated by only 82 pizzas, so no single pizza dominates.
+
+![top5](charts/top5.png)
+
+### Q6. Quantity ordered per category
+```sql
+SELECT pt.category, SUM(od.quantity) AS total_quantity
+FROM pizza_types pt
+JOIN pizzas p ON p.pizza_type_id = pt.pizza_type_id
+JOIN order_details od ON od.pizza_id = p.pizza_id
+GROUP BY pt.category ORDER BY total_quantity DESC;
+```
+| Category | Quantity | Share |
+|---|---|---|
+| Classic | 14,888 | 30.0% |
+| Supreme | 11,987 | 24.2% |
+| Veggie | 11,649 | 23.5% |
+| Chicken | 11,050 | 22.3% |
+
+![category](charts/category.png)
+
+### Q7. Orders by hour of day
+```sql
+SELECT HOUR(`time`) AS hour_of_day, COUNT(*) AS total_orders
+FROM orders GROUP BY HOUR(`time`) ORDER BY hour_of_day;
+```
+Two clear peaks: **lunch (12:00 to 13:59)** with 4,975 orders, and **dinner (17:00 to 18:59)** with 4,735 orders. Almost nothing happens before 11:00 or after 22:00.
+
+![hour](charts/orders_by_hour.png)
+
+### Q8. Category-wise distribution of the menu
+```sql
+SELECT category, COUNT(*) AS pizza_types
+FROM pizza_types GROUP BY category ORDER BY pizza_types DESC;
+```
+Veggie 9, Supreme 9, Classic 8, Chicken 6.
+
+### Q9. Average pizzas ordered per day
+```sql
+SELECT ROUND(AVG(daily_pizzas), 2) AS avg_pizzas_per_day
+FROM (
+  SELECT o.`date`, SUM(od.quantity) AS daily_pizzas
+  FROM order_details od JOIN orders o ON o.order_id = od.order_id
+  GROUP BY o.`date`
+) AS daily;
+```
+**138.47 pizzas per day.** The busiest day was 26 Nov 2015 (266 pizzas) and the quietest was 22 Mar 2015 (77 pizzas).
+
+### Q10. Top 3 pizza types by revenue
+```sql
+SELECT pt.name, ROUND(SUM(p.price * od.quantity), 2) AS revenue
+FROM pizza_types pt
+JOIN pizzas p ON p.pizza_type_id = pt.pizza_type_id
+JOIN order_details od ON od.pizza_id = p.pizza_id
+GROUP BY pt.name ORDER BY revenue DESC LIMIT 3;
+```
+| Rank | Pizza | Revenue |
+|---|---|---|
+| 1 | The Thai Chicken Pizza | $43,434.25 |
+| 2 | The Barbecue Chicken Pizza | $42,768.00 |
+| 3 | The California Chicken Pizza | $41,409.50 |
+
+![rev](charts/top3_rev.png)
+
+### Bonus analysis
+| Insight | Result |
+|---|---|
+| Best weekday | **Friday**, 8,242 pizzas. Sunday is the lowest at 6,035 |
+| Best month | **July**, $72,558. Lowest is October, $64,028 |
+| Revenue by category | Classic $220,053, Supreme $208,197, Chicken $195,920, Veggie $193,690 |
+| Least-sold pizza | The Brie Carre Pizza, 490 sold |
+
+![weekday](charts/weekday.png) ![monthly](charts/monthly.png)
+
+---
+
+##  Key Findings
+1. **$817.9K revenue** from 21,350 orders and 49,574 pizzas in 2015.
+2. **Large is king.** L, M and S make up 99% of sales. XL and XXL are under 1.2% combined.
+3. **Classic is the biggest category by volume (30%)**, but **the top 3 revenue earners are all Chicken pizzas.** Chicken has the fewest menu items (6) yet the highest revenue per pizza type (about $32.7K, versus $27.5K for Classic).
+4. **Demand is concentrated** in a lunch peak (12 to 2 pm) and a dinner peak (5 to 7 pm).
+5. **Fridays and Saturdays are strongest**; Sundays are weakest. Sales are steady across months.
+
+##  Recommendations
+- **Staff up** for 12:00 to 14:00 and 17:00 to 19:00, especially on Fridays.
+- **Promote Chicken pizzas** and bundle them with large sizes, since they earn the most revenue per menu item.
+- **Review the XL and XXL sizes.** They sell under 600 units combined; consider dropping or promoting them.
+- **Review the Brie Carre pizza.** It sold about half as much as most of the menu (490 versus 934 or more for every other pizza).
+- **Run off-peak deals** for mid-afternoon (2 to 4 pm), late evening and Sundays to lift quiet periods.
+
+---
+
+## How to Run
+1. Install MySQL 8+ and a client (MySQL Workbench works well).
+2. Run the `CREATE TABLE` section of [`pizza_sales_analysis.sql`](pizza_sales_analysis.sql).
+3. Import the four CSVs from the `data/` folder using the Table Data Import Wizard or `LOAD DATA`. Orders dates are `m/d/yyyy`, so convert them with `STR_TO_DATE(@d, '%m/%d/%Y')`.
+4. Run the data quality checks, then the analysis queries.
+
+## 🗂 Repository Structure
+```
+├── README.md
+├── pizza_sales_analysis.sql
+├── charts/
+├── data/
+│   ├── orders.csv
+│   ├── order_details.csv
+│   ├── pizzas.csv
+│   └── pizza_types.csv
+└── presentation/
+    └── Pizza_Sales_Presentation.pptx
+```
+
+##  Tools and Skills
+MySQL, multi-table `JOIN`, `GROUP BY`, aggregate functions, subqueries, date and time functions, data validation, business insight writing.
